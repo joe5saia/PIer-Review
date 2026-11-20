@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+node -e 'if (Number(process.versions.node.split(".")[0]) !== 26) throw Error("Use Node 26")'
+docker info --format 'Docker {{.ServerVersion}}'
+pnpm install --frozen-lockfile --prefer-offline
+pnpm exec task image
+pnpm exec task build
+mkdir -p "$HOME/.local/bin"
+if ! command -v task >/dev/null && [[ ! -e "$HOME/.local/bin/task" ]]; then
+  printf '#!/bin/sh\nexec ./node_modules/.bin/task "$@"\n' > "$HOME/.local/bin/task"
+  chmod +x "$HOME/.local/bin/task"
+fi

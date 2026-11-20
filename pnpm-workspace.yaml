@@ -5,6 +5,9 @@ packages:
 allowBuilds:
   # Downloads the pinned Task binary.
   "@go-task/cli": true
+  # Optional provider install hooks; neither is needed at runtime.
+  "@google/genai": false
+  protobufjs: false
 
 # Versions are pinned exactly, so these lint toolchains, which release frequently,
 # may use releases newer than pnpm's minimum release age.
@@ -15,3 +18,11 @@ minimumReleaseAgeExclude:
   - "@tsrs/*"
   - "@cloudflare/oxlint-config"
   - "@nkzw/oxlint-config"
+  - "@earendil-works/chord@1.6.0"
+  - "@earendil-works/pi-ai@1.6.0"
+  - "@earendil-works/pi-codemode@1.6.0"
+  - "@earendil-works/pi-durable@1.6.0"
+  - "@earendil-works/pi-env@1.6.0"
+  - "@earendil-works/pi-mcp@1.6.0"
+  - "@earendil-works/pi-schema@1.6.0"
+  - "@earendil-works/pi-telemetry@1.6.0"

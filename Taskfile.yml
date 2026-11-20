@@ -23,14 +23,56 @@ tasks:
   lint:
     desc: Lint with @cloudflare/oxlint-config and type information, warnings as errors
     sources: *lint-sources
-    cmd: pnpm exec oxlint --type-aware --deny-warnings
+    cmd: pnpm exec oxlint --type-aware --deny-warnings src web projects e2e *.ts
 
   lint:fix:
     desc: Apply the automatic lint corrections
-    cmd: pnpm exec oxlint --type-aware --fix
+    cmd: pnpm exec oxlint --type-aware --fix src web projects e2e *.ts
+
+  fmt:
+    desc: Format source and configuration
+    cmd: pnpm exec oxfmt
+
+  fmt:check:
+    desc: Check source and configuration formatting
+    cmd: pnpm exec oxfmt --check
+
+  typecheck:
+    desc: Check both Node and browser projects
+    cmds:
+      - for: ["tsconfig.json", "web/tsconfig.json"]
+        cmd: pnpm exec tsrs --noEmit -p {{.ITEM}} && pnpm exec tsc --noEmit -p {{.ITEM}}
+
+  build:
+    desc: Build the browser desk for pier serve
+    cmd: pnpm exec vite build web --outDir ../dist --emptyOutDir
+
+  image:
+    desc: Cache the pinned agent image before offline development
+    vars:
+      IMAGE:
+        sh: node --input-type=module -e 'import {image} from "./src/docker.ts"; process.stdout.write(image)'
+    cmd: docker image inspect {{.IMAGE}} >/dev/null 2>&1 || docker pull {{.IMAGE}}
+
+  dev:
+    desc: Build the desk and launch the local server
+    deps: [build]
+    cmd: ./pier serve
+
+  test:
+    desc: Exercise the CLI on loopback with real Docker and no credentials
+    deps: [build]
+    cmd: pnpm exec vitest run
+
+  test:watch:
+    desc: Rerun research scenarios on changes
+    deps: [build]
+    cmd: pnpm exec vitest
 
   check:
     desc: Run all checks, the same as CI
-    # Lint is the only check until the project has source, types and tests.
     cmds:
+      - task: fmt:check
       - task: lint
+      - task: typecheck
+      - task: test
