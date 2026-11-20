@@ -1,0 +1,36 @@
+version: "3"
+
+set: [errexit, pipefail]
+
+vars:
+  LINT_SOURCES: &lint-sources
+    - "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
+    - oxlint.config.ts
+    - package.json
+    - pnpm-lock.yaml
+    - exclude: node_modules/**
+
+tasks:
+  default:
+    desc: List the tasks
+    cmd: task --list
+    silent: true
+
+  install:
+    desc: Install the locked dependencies
+    cmd: pnpm install --frozen-lockfile
+
+  lint:
+    desc: Lint with @cloudflare/oxlint-config and type information, warnings as errors
+    sources: *lint-sources
+    cmd: pnpm exec oxlint --type-aware --deny-warnings
+
+  lint:fix:
+    desc: Apply the automatic lint corrections
+    cmd: pnpm exec oxlint --type-aware --fix
+
+  check:
+    desc: Run all checks, the same as CI
+    # Lint is the only check until the project has source, types and tests.
+    cmds:
+      - task: lint
