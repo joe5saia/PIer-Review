@@ -15,6 +15,8 @@ Setup installs the locked dependencies, caches the pinned Linux container image 
 
 Open the **address printed by the CLI**. Create `harbor-survey` with the supplied source. Send “Total the visits and save the evidence.” Expect **23 visits across three sites**; change the input numbers to change the result. Open the Reader to inspect its calculation, or send it a follow-up. The offline provider follows this survey routine; it is not a general-purpose model. `Ctrl-C`, then `./pier serve` again to reopen the desk.
 
+Ask the Reader “Which site had the most visits?” It cites the existing observations and shares its answer with the coordinator. If counts are missing, reply with `East dock: 5 / West dock: 0` in the waiting thread or its parent: the same Reader resumes. You can also edit **Source document** before replying. Enter sends; Shift+Enter inserts a line break. Bookmark a thread or cited note to reopen it directly after restarting.
+
 ## Run with a model and Pecia
 
 Use a disposable project on a Pecia test stage first. Export these credentials from your secret store into the **server process**; do not put them in the source document, project definition or git. Pier does not read `.env` automatically.

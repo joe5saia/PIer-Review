@@ -38,6 +38,7 @@ const projectIndex = z.object({
         z.object({
           id: z.string(),
           role: z.string(),
+          waiting: z.boolean(),
           reports: z.array(z.object({ result: z.string(), where: z.string() })),
         }),
       ),
@@ -94,9 +95,59 @@ it("resumes admitted research after a process kill and delivers the Reader evide
       ]);
       expect(stdout.trim()).toBe("none true 65534:65534");
     }
-    expect((await post(readerUrl, { text: "Double-check the total." })).ok).toBe(true);
+    expect((await post(readerUrl, { text: "Which site had the most visits?" })).ok).toBe(true);
     await expect.poll(async () => (await threads()).at(-1)?.reports.length, { timeout: 10_000 }).toBe(2);
+    expect((await threads()).at(-1)?.reports.at(-1)?.result).toBe("Transect B had the most visits: 11.");
+    expect(await (await fetch(`${base}/wetlands/notes`)).json()).toEqual(files);
+    await expect
+      .poll(async () =>
+        history
+          .parse(await (await fetch(base + route)).json())
+          .some((m) => m.role === "Child report" && m.text === "Transect B had the most visits: 11."),
+      )
+      .toBe(true);
+    expect((await post(base + route, { text: "Total the visits again." })).ok).toBe(true);
+    await expect.poll(async () => (await threads())[0]?.reports.length, { timeout: 20_000 }).toBe(2);
+    expect((await threads())[0]?.reports.at(-1)).toMatchObject({
+      result: "17 visits recorded across 3 survey sites.",
+      where: summary,
+    });
+    expect(await (await fetch(`${base}/wetlands/notes`)).json()).toEqual(files);
     expect((await fetch(`${base}/wetlands/notes?path=../outside.md`)).ok).toBe(false);
+  } finally {
+    await server.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("answers a delegated wait after restart without spawning replacement threads", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pier-wait-"));
+  let server = await serve(dir);
+  try {
+    const base = () => `${server.url}/api/projects`;
+    const threads = async () => projectIndex.parse(await (await fetch(base())).json()).projects[0]?.threads ?? [];
+    const { id } = z
+      .object({ id: z.uuid() })
+      .parse(await (await post(base(), { id: "docks", source: "No observations yet." })).json());
+    const send = (text: string) => post(`${base()}/docks/threads/${id}`, { text });
+    expect((await send("Count the visits.")).ok).toBe(true);
+    await expect
+      .poll(async () => (await threads())[0]?.reports.at(-1)?.result, { timeout: 20_000 })
+      .toBe("No survey counts found.");
+    const before = await threads();
+    expect(before.filter((t) => t.waiting).map((t) => t.role)).toEqual(["reader"]);
+    await server.stop();
+    server = await serve(dir);
+    expect((await send("East dock: 5 / West dock: 0")).ok).toBe(true);
+    await expect
+      .poll(async () => (await threads())[0]?.reports.at(-1)?.result, { timeout: 20_000 })
+      .toBe("5 visits recorded across 2 survey sites.");
+    await server.stop();
+    server = await serve(dir);
+    const after = await threads();
+    expect(after.map((t) => t.id)).toEqual(before.map((t) => t.id));
+    expect(after.some((t) => t.waiting)).toBe(false);
+    expect(after.every((t) => t.reports.at(-1)?.result === "5 visits recorded across 2 survey sites.")).toBe(true);
   } finally {
     await server.stop();
     await rm(dir, { recursive: true, force: true });

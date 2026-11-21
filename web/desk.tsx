@@ -1,220 +1,220 @@
 import { useState, useEffect } from "react";
-import type { SubmitEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { z } from "zod";
+import Markdown from "react-markdown";
+import { href, index, request, useFeed, errorText, threadName, submit } from "./data.ts";
+import type { Project, Thread } from "./data.ts";
+import { Conversation } from "./thread.tsx";
+import { name } from "../src/spec.ts";
 import "./style.css";
 
-const report = z.object({
-  result: z.string(),
-  notDone: z.string(),
-  where: z.string(),
-  next: z.string(),
-  waitingOn: z.string().optional(),
-});
-const thread = z.object({
-  id: z.string(),
-  title: z.string(),
-  role: z.string(),
-  status: z.string(),
-  waiting: z.boolean(),
-  reports: z.array(report),
-});
-const index = z.object({
-  mode: z.string(),
-  sample: z.string(),
-  projects: z.array(z.object({ id: z.string(), threads: z.array(thread) })),
-});
-const messages = z.array(z.object({ role: z.string(), text: z.string() }));
-async function request<T>(path: string, schema: z.ZodType<T>, body?: unknown): Promise<T> {
-  const r = await fetch(
-    path,
-    body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {},
-  );
-  if (!r.ok) {
-    const parsed = z.object({ error: z.string() }).safeParse(await r.json());
-    throw new Error(parsed.success ? parsed.data.error : r.statusText);
-  }
-  return schema.parse(await r.json());
-}
-function useFeed<T>(path: string, schema: z.ZodType<T>, repeat = true) {
-  const [data, set] = useState<T>();
-  const [error, fail] = useState("");
-  useEffect(() => {
-    let open = true;
-    let timer: ReturnType<typeof setTimeout>;
-    async function load() {
-      try {
-        const value = await request(path, schema);
-        if (open) {
-          set(value);
-          fail("");
-        }
-      } catch (error_) {
-        if (open) {
-          fail(String(error_));
-        }
-      } finally {
-        if (open && repeat) {
-          timer = setTimeout(load, 800);
-        }
-      }
-    }
-    void load();
-    return () => {
-      open = false;
-      clearTimeout(timer);
-    };
-  }, [path, repeat, schema]);
-  return { data, error };
-}
-function Form({
-  create,
-  onDone,
-  sample,
-  path,
-}: {
-  create: boolean;
-  onDone: (id: string) => void;
-  sample: string;
-  path: string;
-}) {
-  const [busy, setBusy] = useState(false),
-    [error, fail] = useState("");
-  async function submit(e: SubmitEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const form = e.currentTarget;
-    const data = Object.fromEntries(new FormData(form));
-    setBusy(true);
-    fail("");
-    try {
-      await request(path, z.object({}), data);
-      onDone(String(data.id ?? ""));
-      form.reset();
-    } catch (error_) {
-      fail(String(error_));
-    } finally {
-      setBusy(false);
-    }
-  }
-  const label = create ? "Create project" : "Send message";
-  return (
-    <form
-      onSubmit={(e) => {
-        void submit(e);
-      }}
-    >
-      {create ? (
-        <>
-          <label>
-            Project name
-            <input
-              name="id"
-              placeholder="harbor-survey"
-              pattern="[a-z][a-z0-9]*(-[a-z0-9]+)*"
-              required
-              maxLength={50}
-            />
-          </label>
-          <label>
-            Source document
-            <textarea name="source" defaultValue={sample} rows={6} required maxLength={32_000} />
-          </label>
-        </>
-      ) : (
-        <label>
-          Message this thread
-          <textarea placeholder="What should we investigate?" name="text" rows={2} required maxLength={32_000} />
-        </label>
-      )}
-      {error && <p role="alert">{error}</p>}
-      <button type="submit" disabled={busy}>
-        {busy ? "Working…" : label} →
-      </button>
-    </form>
-  );
-}
-function Conversation({ t, project }: { t: z.infer<typeof thread>; project: string }) {
-  const path = `/api/projects/${project}/threads/${t.id}`;
-  const { data, error } = useFeed(path, messages);
+const string = z.string(),
+  paths = z.array(string);
+const rule =
+  "Start with a lowercase letter. Use lowercase letters, digits and single hyphens between words (up to 50 characters).";
+function Intake({ sample, fixture }: { sample: string; fixture: boolean }) {
+  const [error, setError] = useState(""),
+    [nameError, setNameError] = useState(""),
+    [busy, setBusy] = useState(false);
   return (
     <>
-      <div className="eyebrow">Thread / {t.role}</div>
-      <h2>{t.title}</h2>
-      <span className="badge">
-        {t.waiting && t.status !== "Waiting on input" ? "Waiting on input · " : ""}
-        {t.status}
-      </span>
-      {t.reports.map((r, i) => (
-        <article key={i}>
-          <div className="eyebrow">Field report · {i + 1}</div>
-          <h3>{r.result}</h3>
-          <dl>
-            {Object.entries(r)
-              .filter(([k]) => k !== "result")
-              .map(([k, v]) => (
-                <div key={k}>
-                  <dt>{{ notDone: "Not done", where: "Where", next: "Next", waitingOn: "Waiting on" }[k]}</dt>
-                  <dd>{v}</dd>
-                </div>
-              ))}
-          </dl>
-        </article>
-      ))}
-      <h4>Transcript</h4>
-      {error && <p role="alert">{error}</p>}
-      {data?.length ? (
-        data.map((m, i) => (
-          <details key={i} open={m.role === "user"}>
-            <summary>
-              {m.role === "user" ? "Researcher input" : m.role} · {m.text.slice(0, 72)}
-              {m.text.length > 72 ? "…" : ""}
-            </summary>
-            <pre>{m.text}</pre>
-          </details>
-        ))
-      ) : (
-        <p className="quiet">No messages yet. Send the first research question below.</p>
-      )}
-      <Form create={false} sample="" path={path} onDone={() => {}} />
+      <div className="eyebrow">Project intake</div>
+      <h2>Open a research project</h2>
+      <p className="quiet">
+        {fixture
+          ? "Try the offline survey: count visits or ask which site had the most."
+          : "Each new project creates a Pecia workspace."}
+      </p>
+      <form
+        noValidate
+        onSubmit={submit(async (form) => {
+          const id = String(new FormData(form).get("id") ?? "");
+          if (!name.safeParse(id).success) {
+            setNameError(id ? rule : "Enter a project name.");
+            form.querySelector("input")?.focus();
+            return;
+          }
+          if (!form.reportValidity()) {
+            return;
+          }
+          setBusy(true);
+          setError("");
+          try {
+            const t = await request(
+              "/api/projects",
+              z.object({ id: z.uuid() }),
+              Object.fromEntries(new FormData(form)),
+            );
+            location.assign(href(id, "thread", t.id));
+          } catch (error_) {
+            const message = errorText(error_);
+            if (/name|already exists/i.test(message)) {
+              setNameError(message);
+              form.querySelector("input")?.focus();
+            } else {
+              setError(message);
+            }
+          } finally {
+            setBusy(false);
+          }
+        })}
+      >
+        <label htmlFor="name">Project name</label>
+        <input
+          id="name"
+          name="id"
+          title={rule}
+          aria-describedby="name-help"
+          aria-invalid={Boolean(nameError)}
+          required
+          maxLength={50}
+          onChange={() => setNameError("")}
+        />
+        <small id="name-help">Example: harbor-survey. {nameError !== rule && rule}</small>
+        {nameError && <p role="alert">{nameError}</p>}
+        <label htmlFor="source">Source document</label>
+        <textarea id="source" name="source" required rows={5} defaultValue={sample} maxLength={32_000} />
+        {error && <p role="alert">{error}</p>}
+        <button type="submit" disabled={busy}>
+          {busy ? "Opening project…" : "Create project"}
+        </button>
+      </form>
     </>
   );
 }
-const pages = z.array(z.string()),
-  markdown = z.string();
-function Page({ path }: { path: string }) {
-  const { data, error } = useFeed(path, markdown, false);
-  return <pre>{error || data}</pre>;
+
+function Source({ project }: { project: string }) {
+  const path = `/api/projects/${project}/source`;
+  const { data, error } = useFeed(path, string, false);
+  const [status, setStatus] = useState("");
+  return (
+    <>
+      <div className="eyebrow">Project material</div>
+      <h2>Source document</h2>
+      <p>Changes apply the next time a thread reads the source. Existing reports keep their original evidence.</p>
+      {error && <p>{error}</p>}
+      {data !== undefined && (
+        <form
+          onSubmit={submit(async (form) => {
+            try {
+              await request(path, z.object({}), Object.fromEntries(new FormData(form)));
+              setStatus("Source saved.");
+            } catch (error_) {
+              setStatus(errorText(error_));
+            }
+          })}
+        >
+          <label>
+            Source text
+            <textarea
+              name="source"
+              required
+              defaultValue={data}
+              rows={10}
+              maxLength={32_000}
+              onChange={() => setStatus("")}
+            />
+          </label>
+          <button type="submit">Save source</button>
+          <p role="status">{status}</p>
+        </form>
+      )}
+    </>
+  );
 }
-function Notes({ id }: { id: string }) {
-  const base = `/api/projects/${id}/notes`,
-    { data, error } = useFeed(base, pages, false);
+
+function EvidencePage({ url }: { url: string }) {
+  const { data, error } = useFeed(url, string, false);
+  return (
+    <div className="markdown">
+      {error && <p role="alert">{error}</p>}
+      <Markdown skipHtml disallowedElements={["img"]}>
+        {data}
+      </Markdown>
+    </div>
+  );
+}
+function Notes({ p, id }: { p: Project; id: string }) {
+  const base = `/api/projects/${p.id}/notes`;
+  const { data, error } = useFeed(base, paths, false);
+  const ordered = (data ?? []).toSorted(
+    (a, b) => p.pages.findIndex((n) => n.path === b) - p.pages.findIndex((n) => n.path === a),
+  );
   return (
     <>
       <div className="eyebrow">Project notebook</div>
-      <h2>Notes</h2>
-      {error && <p role="alert">{error}</p>}
-      {data?.length ? (
-        data.map((p) => (
-          <details key={p}>
-            <summary>{p}</summary>
-            <Page path={`${base}?path=${encodeURIComponent(p)}`} />
-          </details>
-        ))
-      ) : (
-        <p className="quiet">Notes written by agents appear here.</p>
-      )}
+      <h2>{id ? "Evidence note" : "Notes"}</h2>
+      {id && <a href={href(p.id, "notes")}>← All notes</a>}
+      {error && <p>{error}</p>}
+      {!id && !ordered.length && <p>No notes yet.</p>}
+      {(id ? [id] : ordered).map((path) => {
+        const meta = p.pages.find((n) => n.path === path);
+        const cited = p.threads.filter((t) => t.reports.some((r) => r.where === path));
+        const author = p.threads.find((t) => t.id === meta?.author);
+        const title = author?.title ?? cited.at(-1)?.title ?? path;
+        return (
+          <article key={path}>
+            <div className="eyebrow">{meta ? new Date(meta.at).toLocaleString() : "Project note"}</div>
+            <h3>
+              <a href={href(p.id, "notes", path)}>{title}</a>
+            </h3>
+            <small>{path}</small>
+            {author && (
+              <p>
+                Written by <a href={href(p.id, "thread", author.id)}>{threadName(p, author)}</a>
+              </p>
+            )}
+            {cited.map((t) => (
+              <p key={t.id}>
+                <a href={href(p.id, "thread", t.id)}>{threadName(p, t)} report</a> ·{" "}
+                {t.reports.findLast((r) => r.where === path)?.result}
+              </p>
+            ))}
+            {id && <EvidencePage url={`${base}?path=${encodeURIComponent(path)}`} />}
+          </article>
+        );
+      })}
     </>
   );
 }
+
+function Tree({ p, parent, selected }: { p: Project; parent: string | null; selected: string }) {
+  const children = p.threads.filter((t) => t.parent === parent);
+  return children.length ? (
+    <ul>
+      {children.map((t) => (
+        <li key={t.id}>
+          <a href={href(p.id, "thread", t.id)} aria-current={selected === t.id ? "page" : undefined}>
+            <strong>{threadName(p, t)}</strong>
+            <span>{t.title}</span>
+            <small>{t.status}</small>
+          </a>
+          <Tree p={p} parent={t.id} selected={selected} />
+        </li>
+      ))}
+    </ul>
+  ) : null;
+}
 function App() {
   const { data, error } = useFeed("/api/projects", index);
-  const [projectId, select] = useState(""),
-    [threadId, threadSelect] = useState(""),
-    [newProject, create] = useState(false),
-    [notes, setNotes] = useState(false);
-  const p = projectId ? data?.projects.find((v) => v.id === projectId) : data?.projects[0];
-  const t = p?.threads.find((v) => v.id === threadId) ?? p?.threads[0];
-  const editing = newProject || (!projectId && !p);
+  const [hash, setHash] = useState(location.hash),
+    [menu, setMenu] = useState(false);
+  useEffect(() => {
+    const change = () => {
+      setHash(location.hash);
+      setMenu(false);
+      window.scrollTo(0, 0);
+    };
+    window.addEventListener("hashchange", change);
+    return () => window.removeEventListener("hashchange", change);
+  }, []);
+  const route = new URLSearchParams(hash.slice(1));
+  const view = route.get("view") ?? "thread",
+    id = route.get("id") ?? "",
+    slug = route.get("project");
+  const p = slug ? data?.projects.find((x) => x.id === slug) : data?.projects[0];
+  const t: Thread | undefined = id ? p?.threads.find((x) => x.id === id) : p?.threads[0];
+  const intake = view === "new" || (!slug && !p);
   return (
     <>
       <header>
@@ -223,92 +223,53 @@ function App() {
         <em>{data?.mode ?? "Connecting"} mode</em>
       </header>
       <main>
-        <div className="mast">
-          <div className="eyebrow">Pier Review &nbsp; / &nbsp; Research workspace</div>
-          <h1>
-            Field desk<span>.</span>
-          </h1>
-          <p>Coordinate source research, follow agent threads, and read their findings.</p>
-        </div>
+        {error && (
+          <p className="notice" role="status">
+            {error}
+          </p>
+        )}
         <div className="desk">
-          <nav>
-            <div className="eyebrow">
-              Projects <small>{data?.projects.length ?? 0}</small>
-            </div>
-            {data?.projects.map((v) => (
-              <button
-                type="button"
-                className={!editing && v === p ? "active" : ""}
-                key={v.id}
-                onClick={() => {
-                  select(v.id);
-                  threadSelect("");
-                  create(false);
-                  setNotes(false);
-                }}
+          <button type="button" className="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
+            Projects & threads {menu ? "▴" : "▾"}
+          </button>
+          <nav className={menu ? "shown" : ""} aria-label="Projects and threads">
+            <div className="eyebrow">Projects</div>
+            {data?.projects.map((x) => (
+              <a
+                key={x.id}
+                href={href(x.id, "thread", x.threads[0]?.id)}
+                className={x.id === p?.id && !intake ? "current" : ""}
               >
-                {v.id}
-              </button>
+                {x.id}
+              </a>
             ))}
-            <button type="button" className="add" onClick={() => create(true)}>
-              ＋ New project
-            </button>
-            {p && !editing && (
+            <a href={href("", "new")}>＋ New project</a>
+            {p && !intake && (
               <>
-                <div className="eyebrow group">
-                  Threads <small>{p.threads.length}</small>
-                </div>
-                {p.threads.map((th) => (
-                  <button
-                    type="button"
-                    key={th.id}
-                    className={th.id === t?.id && !notes ? "active" : ""}
-                    onClick={() => {
-                      threadSelect(th.id);
-                      setNotes(false);
-                    }}
-                  >
-                    <strong>{th.role}</strong>
-                    <small>{th.waiting ? "Waiting on input" : th.status}</small>
-                  </button>
-                ))}
-                <button type="button" className="add" onClick={() => setNotes(true)}>
-                  ▤ Project notes
-                </button>
+                <div className="eyebrow group">Threads · {p.threads.length}</div>
+                <Tree p={p} parent={null} selected={view === "thread" ? (t?.id ?? "") : ""} />
+                <a href={href(p.id, "source")}>Source document</a>
+                <a href={href(p.id, "notes")}>Project notes</a>
               </>
             )}
           </nav>
-          <section>
-            {error && <p role="alert">{error}</p>}
-            {!data && <p>Connecting to the desk…</p>}
-            {data && !p && !editing && <p>Opening project…</p>}
-            {data && editing && (
-              <>
-                <div className="eyebrow">Project intake</div>
-                <h2>Open a research project</h2>
-                <p className="quiet">
-                  Give the coordinator a source to work from.{" "}
-                  {data.mode === "fixture"
-                    ? "The offline fixture analyzes numeric survey rows."
-                    : "A new project provisions its own Pecia workspace."}
-                </p>
-                <Form
-                  create
-                  sample={data.sample}
-                  path="/api/projects"
-                  onDone={(id) => {
-                    select(id);
-                    create(false);
-                    setNotes(false);
-                  }}
-                />
-              </>
+          <section key={`${slug}/${view}/${id}`}>
+            <div className="breadcrumb">Field desk {p && !intake && ` / ${p.id}`}</div>
+            {!data && !error && <p>Connecting to the desk…</p>}
+            {data && intake && <Intake fixture={data.mode === "fixture"} sample={data.sample} />}{" "}
+            {data && !intake && !p && (
+              <p>
+                Looking for this project… <a href={href("", "new")}>Open project intake</a>
+              </p>
             )}
-            {!editing && p && notes && <Notes key={p.id} id={p.id} />}
-            {!editing && !notes && p && t && <Conversation key={t.id} t={t} project={p.id} />}
+            {p && !intake && view === "notes" && <Notes p={p} id={id} />}{" "}
+            {p && !intake && view === "source" && <Source project={p.id} />}{" "}
+            {p &&
+              !intake &&
+              view === "thread" &&
+              (t ? <Conversation t={t} p={p} offline={Boolean(error)} /> : <p>Thread not found.</p>)}
           </section>
         </div>
-        <footer>PIER REVIEW &nbsp; / &nbsp; LOCAL RESEARCH APP</footer>
       </main>
     </>
   );
