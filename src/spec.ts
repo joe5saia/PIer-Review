@@ -20,6 +20,7 @@ export const agent = z.strictObject({
     spawn: z.array(name),
     pecia: z.enum(["read", "write"]).optional(),
     threads: z.strictObject({ read: z.boolean().optional(), message: z.boolean().optional() }).optional(),
+    briefing: z.boolean().optional(),
   }),
   limits: z
     .strictObject({ maxTurns: z.number().int().min(1).max(32), maxNestedCalls: z.number().int().min(1).max(48) })

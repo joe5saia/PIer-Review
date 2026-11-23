@@ -79,7 +79,17 @@ it("resumes admitted research after a process kill and delivers the Reader evide
     expect(log.find((m) => m.role === "toolResult" && m.text.includes("Script completed"))?.text).toContain(
       '"fetch":"undefined","process":"undefined","denied":true',
     );
-    expect(history.parse(await (await fetch(base + route)).json()).some((m) => m.role === "Child report")).toBe(true);
+    const coordinatorLog = z
+      .array(z.object({ role: z.string(), report: z.object({ result: z.string() }).optional() }))
+      .parse(await (await fetch(base + route)).json());
+    expect(coordinatorLog.some((m) => m.role === "Child report")).toBe(true);
+    // The desk shows the report that ended a turn as that turn's answer.
+    expect(coordinatorLog.findLast((m) => m.report)?.report?.result).toBe(all[0]?.reports[0]?.result);
+    // The New space dialog sends only a name; a fixture space then starts from the offline survey.
+    expect((await post(base, { id: "harbor" })).ok).toBe(true);
+    expect(await (await fetch(`${base}/harbor/source`)).json()).toContain("Salt Marsh: 12");
+    const frame = await fetch(`${server.url}/frame`);
+    expect(frame.headers.get("content-security-policy")).toMatch(/^sandbox allow-scripts; default-src 'none';/);
     const files = z.array(z.string()).parse(await (await fetch(`${base}/wetlands/notes`)).json());
     expect(files).toHaveLength(2);
     const summary = all[0]?.reports[0]?.where;
@@ -106,8 +116,17 @@ it("resumes admitted research after a process kill and delivers the Reader evide
           .some((m) => m.role === "Child report" && m.text === "Transect B had the most visits: 11."),
       )
       .toBe(true);
-    expect((await post(base + route, { text: "Total the visits again." })).ok).toBe(true);
+    // Talking to the Reader directly wakes each supervisor in turn: the researcher passes it on, the coordinator
+    // reacts and refreshes the briefing.
     await expect.poll(async () => (await threads())[0]?.reports.length, { timeout: 20_000 }).toBe(2);
+    expect((await threads())[1]?.reports.at(-1)?.result).toBe("Passed on: Transect B had the most visits: 11.");
+    expect(await (await fetch(`${base}/wetlands/briefing`)).json()).toContain("Transect B had the most visits: 11.");
+    const updates = history.parse(await (await fetch(base + route)).json()).filter((m) => m.role === "Update");
+    expect(updates.map((m) => m.text.split("\n")[1])).toEqual([
+      "Result: Passed on: Transect B had the most visits: 11.",
+    ]);
+    expect((await post(base + route, { text: "Total the visits again." })).ok).toBe(true);
+    await expect.poll(async () => (await threads())[0]?.reports.length, { timeout: 20_000 }).toBe(3);
     expect((await threads())[0]?.reports.at(-1)).toMatchObject({
       result: "17 visits recorded across 3 survey sites.",
       where: summary,

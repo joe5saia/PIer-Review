@@ -1,97 +1,114 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { z } from "zod";
-import Markdown from "react-markdown";
-import { href, index, request, useFeed, errorText, threadName, submit } from "./data.ts";
+import { href, index, request, useFeed, errorText, threadName, submit, spaceStatus } from "./data.ts";
 import type { Project, Thread } from "./data.ts";
-import { Conversation } from "./thread.tsx";
+import { ThreadView } from "./thread.tsx";
+import { Rich, HtmlFrame } from "./markdown.tsx";
 import { name } from "../src/spec.ts";
+import "@fontsource-variable/jost/wght.css";
 import "./style.css";
 
 const string = z.string(),
   paths = z.array(string);
-const rule =
-  "Start with a lowercase letter. Use lowercase letters, digits and single hyphens between words (up to 50 characters).";
-function Intake({ sample, fixture }: { sample: string; fixture: boolean }) {
-  const [error, setError] = useState(""),
-    [nameError, setNameError] = useState(""),
+const rule = "Lowercase letters, digits and single hyphens, starting with a letter.";
+// The only step to a new space: name it, press Enter, and it opens.
+function NewSpace({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null),
+    [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const d = ref.current;
+    if (open && d && !d.open) {
+      setError("");
+      d.showModal();
+    }
+    if (!open && d?.open) {
+      d.close();
+    }
+  }, [open]);
   return (
-    <>
-      <div className="eyebrow">Project intake</div>
-      <h2>Open a research project</h2>
-      <p className="quiet">
-        {fixture
-          ? "Try the offline survey: count visits or ask which site had the most."
-          : "Each new project creates a Pecia workspace."}
-      </p>
+    <dialog
+      ref={ref}
+      className="newspace"
+      aria-label="New space"
+      onClose={onClose}
+      onClick={(e) => {
+        // A click on the backdrop lands on the dialog itself.
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <form
         noValidate
         onSubmit={submit(async (form) => {
-          const id = String(new FormData(form).get("id") ?? "");
+          const id = String(new FormData(form).get("id") ?? "").trim();
           if (!name.safeParse(id).success) {
-            setNameError(id ? rule : "Enter a project name.");
-            form.querySelector("input")?.focus();
-            return;
-          }
-          if (!form.reportValidity()) {
+            setError(id ? rule : "Enter a space name.");
             return;
           }
           setBusy(true);
           setError("");
           try {
-            const t = await request(
-              "/api/projects",
-              z.object({ id: z.uuid() }),
-              Object.fromEntries(new FormData(form)),
-            );
-            location.assign(href(id, "thread", t.id));
+            await request("/api/projects", z.object({ id: z.uuid() }), { id });
+            form.reset();
+            onClose();
+            location.assign(href(id, "space"));
           } catch (error_) {
-            const message = errorText(error_);
-            if (/name|already exists/i.test(message)) {
-              setNameError(message);
-              form.querySelector("input")?.focus();
-            } else {
-              setError(message);
-            }
+            setError(errorText(error_));
           } finally {
             setBusy(false);
           }
         })}
       >
-        <label htmlFor="name">Project name</label>
+        <label htmlFor="space-name" className="eyebrow">
+          New space
+        </label>
         <input
-          id="name"
+          id="space-name"
           name="id"
-          title={rule}
-          aria-describedby="name-help"
-          aria-invalid={Boolean(nameError)}
-          required
+          autoFocus
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="e.g. wetland-count"
           maxLength={50}
-          onChange={() => setNameError("")}
+          aria-invalid={Boolean(error)}
+          disabled={busy}
+          onChange={() => setError("")}
         />
-        <small id="name-help">Example: harbor-survey. {nameError !== rule && rule}</small>
-        {nameError && <p role="alert">{nameError}</p>}
-        <label htmlFor="source">Source document</label>
-        <textarea id="source" name="source" required rows={5} defaultValue={sample} maxLength={32_000} />
-        {error && <p role="alert">{error}</p>}
-        <button type="submit" disabled={busy}>
-          {busy ? "Opening project…" : "Create project"}
-        </button>
+        <p className={error ? "" : "quiet"} role={error ? "alert" : undefined}>
+          {error || (busy ? "Opening space…" : "Enter creates and opens it · Esc cancels")}
+        </p>
       </form>
-    </>
+    </dialog>
   );
 }
 
 function Source({ project }: { project: string }) {
-  const path = `/api/projects/${project}/source`;
+  const path = `/api/projects/${project}/source`,
+    key = keyOf({ type: "source" });
   const { data, error } = useFeed(path, string, false);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(""),
+    [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!dirty) {
+      unsaved.delete(key);
+      return;
+    }
+    unsaved.add(key);
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => {
+      window.removeEventListener("beforeunload", warn);
+      unsaved.delete(key);
+    };
+  }, [dirty, key]);
   return (
-    <>
-      <div className="eyebrow">Project material</div>
-      <h2>Source document</h2>
-      <p>Changes apply the next time a thread reads the source. Existing reports keep their original evidence.</p>
+    <div className="pad">
+      <p className="quiet">
+        Changes apply the next time a thread reads the source. Existing reports keep their original evidence.
+      </p>
       {error && <p>{error}</p>}
       {data !== undefined && (
         <form
@@ -99,179 +116,457 @@ function Source({ project }: { project: string }) {
             try {
               await request(path, z.object({}), Object.fromEntries(new FormData(form)));
               setStatus("Source saved.");
+              setDirty(false);
             } catch (error_) {
               setStatus(errorText(error_));
             }
           })}
         >
           <label>
-            Source text
+            Source text {dirty && <em>· unsaved changes</em>}
             <textarea
               name="source"
               required
               defaultValue={data}
-              rows={10}
+              rows={12}
               maxLength={32_000}
-              onChange={() => setStatus("")}
+              onChange={() => {
+                setStatus("");
+                setDirty(true);
+              }}
             />
           </label>
           <button type="submit">Save source</button>
           <p role="status">{status}</p>
         </form>
       )}
-    </>
-  );
-}
-
-function EvidencePage({ url }: { url: string }) {
-  const { data, error } = useFeed(url, string, false);
-  return (
-    <div className="markdown">
-      {error && <p role="alert">{error}</p>}
-      <Markdown skipHtml disallowedElements={["img"]}>
-        {data}
-      </Markdown>
     </div>
   );
 }
-function Notes({ p, id }: { p: Project; id: string }) {
-  const base = `/api/projects/${p.id}/notes`;
-  const { data, error } = useFeed(base, paths, false);
+
+function Note({ p, path }: { p: Project; path: string }) {
+  const { data, error } = useFeed(`/api/projects/${p.id}/notes?path=${encodeURIComponent(path)}`, string, false);
+  const meta = p.pages.find((n) => n.path === path);
+  const author = p.threads.find((t) => t.id === meta?.author);
+  return (
+    <div className="pad">
+      <small className="quiet">
+        {path}
+        {author && (
+          <>
+            {" · written by "}
+            <a href={href(p.id, "thread", author.id)}>{threadName(p, author)}</a>
+          </>
+        )}
+        {meta && ` · ${new Date(meta.at).toLocaleString()}`}
+      </small>
+      {error && <p role="alert">{error}</p>}
+      {data !== undefined && <Rich text={data} />}
+    </div>
+  );
+}
+function Notes({ p }: { p: Project }) {
+  const { data, error } = useFeed(`/api/projects/${p.id}/notes`, paths);
   const ordered = (data ?? []).toSorted(
     (a, b) => p.pages.findIndex((n) => n.path === b) - p.pages.findIndex((n) => n.path === a),
   );
   return (
-    <>
-      <div className="eyebrow">Project notebook</div>
-      <h2>{id ? "Evidence note" : "Notes"}</h2>
-      {id && <a href={href(p.id, "notes")}>← All notes</a>}
+    <div className="pad">
       {error && <p>{error}</p>}
-      {!id && !ordered.length && <p>No notes yet.</p>}
-      {(id ? [id] : ordered).map((path) => {
-        const meta = p.pages.find((n) => n.path === path);
-        const cited = p.threads.filter((t) => t.reports.some((r) => r.where === path));
-        const author = p.threads.find((t) => t.id === meta?.author);
-        const title = author?.title ?? cited.at(-1)?.title ?? path;
-        return (
-          <article key={path}>
-            <div className="eyebrow">{meta ? new Date(meta.at).toLocaleString() : "Project note"}</div>
-            <h3>
-              <a href={href(p.id, "notes", path)}>{title}</a>
-            </h3>
-            <small>{path}</small>
-            {author && (
-              <p>
-                Written by <a href={href(p.id, "thread", author.id)}>{threadName(p, author)}</a>
-              </p>
-            )}
-            {cited.map((t) => (
-              <p key={t.id}>
-                <a href={href(p.id, "thread", t.id)}>{threadName(p, t)} report</a> ·{" "}
-                {t.reports.findLast((r) => r.where === path)?.result}
-              </p>
-            ))}
-            {id && <EvidencePage url={`${base}?path=${encodeURIComponent(path)}`} />}
-          </article>
-        );
-      })}
-    </>
+      {data && !ordered.length && <p className="quiet">No notes yet.</p>}
+      <ul className="notes">
+        {ordered.map((path) => {
+          const cited = p.threads.filter((t) => t.reports.some((r) => r.where === path));
+          return (
+            <li key={path}>
+              <a href={href(p.id, "notes", path)}>{path}</a>
+              {cited.map((t) => (
+                <small key={t.id}>
+                  {threadName(p, t)}: {t.reports.findLast((r) => r.where === path)?.result}
+                </small>
+              ))}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
-function Tree({ p, parent, selected }: { p: Project; parent: string | null; selected: string }) {
+type Tab =
+  | { type: "briefing" }
+  | { type: "thread"; id: string }
+  | { type: "notes" }
+  | { type: "note"; path: string }
+  | { type: "source" };
+const tab = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("briefing") }),
+  z.object({ type: z.literal("thread"), id: z.string() }),
+  z.object({ type: z.literal("notes") }),
+  z.object({ type: z.literal("note"), path: z.string() }),
+  z.object({ type: z.literal("source") }),
+]);
+const keyOf = (t: Tab) => {
+  if (t.type === "thread") {
+    return `thread:${t.id}`;
+  }
+  return t.type === "note" ? `note:${t.path}` : t.type;
+};
+const parse = (hash: string) => new URLSearchParams(hash.replace(/^#/, ""));
+function tabFor(route: URLSearchParams): Tab | undefined {
+  const view = route.get("view"),
+    id = route.get("id") ?? "";
+  if (view === "thread" && id) {
+    return { type: "thread", id };
+  }
+  if (view === "notes") {
+    return id ? { type: "note", path: id } : { type: "notes" };
+  }
+  return view === "source" ? { type: "source" } : undefined;
+}
+// Unsaved editors register here so closing their tab asks first.
+const unsaved = new Set<string>();
+const briefingTab: Tab = { type: "briefing" };
+const opened = z.object({ tabs: z.array(tab), active: z.string() });
+// Open tabs are a view preference of this browser, kept per space.
+function useTabs(space: string) {
+  const load = useCallback(() => {
+    const saved = opened.safeParse(JSON.parse(localStorage.getItem(`pier.tabs.${space}`) ?? "null")).data ?? {
+      tabs: [briefingTab],
+      active: "briefing",
+    };
+    // A bookmarked thread or note opens as a tab in its space.
+    const route = parse(location.hash),
+      t = route.get("project") === space ? tabFor(route) : undefined;
+    if (!t) {
+      return saved;
+    }
+    const tabs = saved.tabs.some((x) => keyOf(x) === keyOf(t)) ? saved.tabs : [...saved.tabs, t];
+    return { tabs, active: keyOf(t) };
+  }, [space]);
+  const [state, setState] = useState(() => ({ space, ...load() }));
+  const current = state.space === space ? state : { space, ...load() };
+  const change = useCallback(
+    (f: (s: z.infer<typeof opened>) => z.infer<typeof opened>) => {
+      setState((prev) => {
+        const next = f(prev.space === space ? prev : load());
+        localStorage.setItem(`pier.tabs.${space}`, JSON.stringify(next));
+        return { space, ...next };
+      });
+    },
+    [space, load],
+  );
+  const open = useCallback(
+    (t: Tab) =>
+      change((s) => ({
+        tabs: s.tabs.some((x) => keyOf(x) === keyOf(t)) ? s.tabs : [...s.tabs, t],
+        active: keyOf(t),
+      })),
+    [change],
+  );
+  const close = (key: string) => {
+    if (key === "briefing" || (unsaved.has(key) && !confirm("Discard unsaved changes in this tab?"))) {
+      return;
+    }
+    change((s) => {
+      const i = s.tabs.findIndex((x) => keyOf(x) === key);
+      const tabs = s.tabs.filter((x) => keyOf(x) !== key);
+      const active = s.active === key ? keyOf(tabs[Math.max(0, i - 1)] ?? briefingTab) : s.active;
+      return { tabs, active };
+    });
+  };
+  return {
+    tabs: current.tabs,
+    active: current.active,
+    open,
+    close,
+    focus: (key: string) => change((s) => ({ ...s, active: key })),
+  };
+}
+
+const statusClass = (t: Thread) => {
+  if (t.waiting) {
+    return "needs-input";
+  }
+  return t.busy ? "working" : "idle";
+};
+function Tree({ p, parent, open }: { p: Project; parent: string | null; open: (id: string) => void }) {
   const children = p.threads.filter((t) => t.parent === parent);
   return children.length ? (
     <ul>
       {children.map((t) => (
         <li key={t.id}>
-          <a href={href(p.id, "thread", t.id)} aria-current={selected === t.id ? "page" : undefined}>
-            <strong>{threadName(p, t)}</strong>
-            <span>{t.title}</span>
-            <small>{t.status}</small>
-          </a>
-          <Tree p={p} parent={t.id} selected={selected} />
+          <button type="button" className={`node ${statusClass(t)}`} onClick={() => open(t.id)}>
+            <i className="dot" />
+            <span>
+              <b>{threadName(p, t)}</b> · {t.title}
+              <small>{t.waiting ? `Needs input: ${t.reports.at(-1)?.waitingOn ?? ""}` : t.status}</small>
+              {t.reports.at(-1) && <em>{t.reports.at(-1)?.result}</em>}
+            </span>
+          </button>
+          <Tree p={p} parent={t.id} open={open} />
         </li>
       ))}
     </ul>
   ) : null;
 }
+
+// The briefing: goals at a glance from the desk's own records, then the coordinator's running HTML account.
+function Briefing({ p, open }: { p: Project; open: (id: string) => void }) {
+  const { data } = useFeed(`/api/projects/${p.id}/briefing`, string);
+  const top = p.threads.find((t) => t.parent === null);
+  const below = p.threads.filter((t) => t.parent !== null);
+  const recent = below.toReversed();
+  return (
+    <div className="pad briefing">
+      <section className="goal">
+        <div className="eyebrow">Top-level goal</div>
+        <h2>{top?.goal ?? "No goal yet. Ask the coordinator for something."}</h2>
+        {top && (
+          <p className="quiet">
+            Coordinator · {top.waiting ? "needs your input" : top.status}
+            {top.reports.at(-1) && ` · latest: ${top.reports.at(-1)?.result}`}
+          </p>
+        )}
+      </section>
+      {recent.length > 0 && (
+        <section>
+          <div className="eyebrow">Sub-goals</div>
+          <div className="cards">
+            {recent.map((t) => (
+              <button type="button" key={t.id} className={`card ${statusClass(t)}`} onClick={() => open(t.id)}>
+                <small>
+                  {threadName(p, t)} · {t.waiting ? "Needs input" : t.status}
+                </small>
+                <b>{t.goal ?? t.title}</b>
+                {t.reports.at(-1) && <span>{t.reports.at(-1)?.result}</span>}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+      <section>
+        <div className="eyebrow">From the coordinator</div>
+        {data ? (
+          <HtmlFrame html={data} onOpen={open} />
+        ) : (
+          <p className="quiet">The coordinator writes its briefing here once work starts.</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ThreadHeader({ p, t, open }: { p: Project; t: Thread; open: (id: string) => void }) {
+  const chain: Array<Thread> = [];
+  let up = p.threads.find((x) => x.id === t.parent);
+  while (up) {
+    chain.unshift(up);
+    const id = up.parent;
+    up = p.threads.find((x) => x.id === id);
+  }
+  return (
+    <header className="threadhead">
+      <nav aria-label="Thread chain">
+        {chain.map((c) => (
+          <button type="button" className="link" key={c.id} onClick={() => open(c.id)}>
+            {threadName(p, c)} ›
+          </button>
+        ))}
+        <span>{threadName(p, t)}</span>
+      </nav>
+      <h2>{t.goal ?? t.title}</h2>
+      <small className={`status ${statusClass(t)}`}>{t.waiting ? "Needs input" : t.status}</small>
+    </header>
+  );
+}
+
 function App() {
   const { data, error } = useFeed("/api/projects", index);
-  const [hash, setHash] = useState(location.hash),
-    [menu, setMenu] = useState(false);
+  const [route, setRoute] = useState(() => parse(location.hash));
+  const [tree, setTree] = useState(false);
+  const slug = route.get("project") ?? localStorage.getItem("pier.space") ?? "";
+  const p = data?.projects.find((x) => x.id === slug) ?? (slug ? undefined : data?.projects[0]);
+  const coordinator = p?.threads.find((t) => t.parent === null);
+  const [naming, setNaming] = useState(false);
+  const empty = data && !data.projects.length;
+  const { tabs, active, open, close, focus } = useTabs(p?.id ?? "");
+  const openThread = useCallback(
+    (id: string) => {
+      open({ type: "thread", id });
+      setTree(false);
+    },
+    [open],
+  );
+  // In-app links open tabs, even when the hash is already current.
+  const go = useCallback(
+    (hash: string) => {
+      const next = parse(hash);
+      setRoute(next);
+      const target = next.get("project");
+      if (target) {
+        localStorage.setItem("pier.space", target);
+      }
+      const t = tabFor(next);
+      if (t && (!target || target === p?.id)) {
+        open(t);
+      }
+    },
+    [open, p?.id],
+  );
   useEffect(() => {
-    const change = () => {
-      setHash(location.hash);
-      setMenu(false);
-      window.scrollTo(0, 0);
+    const change = () => go(location.hash);
+    const click = (e: MouseEvent) => {
+      const target = z.instanceof(Element).safeParse(e.target).data?.closest("a")?.getAttribute("href");
+      if (target?.startsWith("#") && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) {
+        e.preventDefault();
+        history.pushState(null, "", target);
+        go(target);
+      }
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setTree(false);
+      }
     };
     window.addEventListener("hashchange", change);
-    return () => window.removeEventListener("hashchange", change);
-  }, []);
-  const route = new URLSearchParams(hash.slice(1));
-  const view = route.get("view") ?? "thread",
-    id = route.get("id") ?? "",
-    slug = route.get("project");
-  const p = slug ? data?.projects.find((x) => x.id === slug) : data?.projects[0];
-  const t: Thread | undefined = id ? p?.threads.find((x) => x.id === id) : p?.threads[0];
-  const intake = view === "new" || (!slug && !p);
+    window.addEventListener("keydown", key);
+    document.addEventListener("click", click);
+    return () => {
+      window.removeEventListener("hashchange", change);
+      window.removeEventListener("keydown", key);
+      document.removeEventListener("click", click);
+    };
+  }, [go]);
+  const title = (t: Tab) => {
+    if (t.type === "thread") {
+      const th = p?.threads.find((x) => x.id === t.id);
+      return th && p ? `${threadName(p, th)} · ${th.title}` : "Thread";
+    }
+    if (t.type === "note") {
+      return t.path;
+    }
+    return { briefing: "Briefing", notes: "Notes", source: "Source" }[t.type];
+  };
+  const body = (t: Tab) => {
+    if (!p) {
+      return null;
+    }
+    if (t.type === "briefing") {
+      return <Briefing p={p} open={openThread} />;
+    }
+    if (t.type === "thread") {
+      const th = p.threads.find((x) => x.id === t.id);
+      return th ? (
+        <div className="threadtab">
+          <ThreadHeader p={p} t={th} open={openThread} />
+          <ThreadView t={th} p={p} offline={Boolean(error)} />
+        </div>
+      ) : (
+        <p className="pad">Thread not found.</p>
+      );
+    }
+    if (t.type === "note") {
+      return <Note p={p} path={t.path} />;
+    }
+    return t.type === "notes" ? <Notes p={p} /> : <Source project={p.id} />;
+  };
+  const shown = tabs.find((t) => keyOf(t) === active) ?? briefingTab;
   return (
-    <>
-      <header>
-        <b>≋ &nbsp; Pier Review</b>
-        <span>Research desk</span>
-        <em>{data?.mode ?? "Connecting"} mode</em>
-      </header>
-      <main>
+    <div className="app">
+      <nav aria-label="Spaces">
+        <div className="brand">
+          <b>Pier Review</b>
+          <em>{data?.mode ?? "connecting"}</em>
+        </div>
+        <div className="eyebrow">Spaces</div>
+        {data?.projects.map((x) => {
+          const status = spaceStatus(x);
+          return (
+            <div key={x.id} className={x.id === p?.id ? "space current" : "space"}>
+              <a href={href(x.id, "space")}>
+                <span>{x.id}</span>
+                <small className={`status ${status.replace(" ", "-").toLowerCase()}`}>{status}</small>
+              </a>
+              {x.id === p?.id && (
+                <div className="contents">
+                  <a href={href(x.id, "notes")}>Notes · {x.pages.length}</a>
+                  <a href={href(x.id, "source")}>Source document</a>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <button type="button" className="new" onClick={() => setNaming(true)}>
+          ＋ New space
+        </button>
         {error && (
           <p className="notice" role="status">
             {error}
           </p>
         )}
-        <div className="desk">
-          <button type="button" className="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
-            Projects & threads {menu ? "▴" : "▾"}
+      </nav>
+      {!data && !error && <p className="pad">Connecting to the desk…</p>}
+      <NewSpace open={naming || Boolean(empty)} onClose={() => setNaming(false)} />
+      {data && !p && (
+        <p className="pad">
+          {empty ? "No spaces yet." : "Looking for this space…"}{" "}
+          <button type="button" className="link" onClick={() => setNaming(true)}>
+            Create a space
           </button>
-          <nav className={menu ? "shown" : ""} aria-label="Projects and threads">
-            <div className="eyebrow">Projects</div>
-            {data?.projects.map((x) => (
-              <a
-                key={x.id}
-                href={href(x.id, "thread", x.threads[0]?.id)}
-                className={x.id === p?.id && !intake ? "current" : ""}
-              >
-                {x.id}
-              </a>
-            ))}
-            <a href={href("", "new")}>＋ New project</a>
-            {p && !intake && (
+        </p>
+      )}
+      {p && (
+        <>
+          <section className="coordinator" aria-label="Coordinator">
+            <header>
+              <div className="eyebrow">Coordinator</div>
+              <h1>{p.id}</h1>
+            </header>
+            {coordinator && <ThreadView key={coordinator.id} t={coordinator} p={p} offline={Boolean(error)} />}
+          </section>
+          <section className="main" aria-label="Space">
+            <div className="tabbar" role="tablist">
+              {tabs.map((t) => {
+                const k = keyOf(t);
+                return (
+                  <div key={k} className={k === keyOf(shown) ? "tab active" : "tab"}>
+                    <button type="button" role="tab" aria-selected={k === keyOf(shown)} onClick={() => focus(k)}>
+                      {title(t)}
+                    </button>
+                    {t.type !== "briefing" && (
+                      <button type="button" className="x" aria-label={`Close ${title(t)}`} onClick={() => close(k)}>
+                        ×
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              <button type="button" className="treebutton" aria-expanded={tree} onClick={() => setTree(!tree)}>
+                Threads · {p.threads.length}
+              </button>
+            </div>
+            <div className="tabbody" key={keyOf(shown)}>
+              {body(shown)}
+            </div>
+            {tree && (
               <>
-                <div className="eyebrow group">Threads · {p.threads.length}</div>
-                <Tree p={p} parent={null} selected={view === "thread" ? (t?.id ?? "") : ""} />
-                <a href={href(p.id, "source")}>Source document</a>
-                <a href={href(p.id, "notes")}>Project notes</a>
+                <button type="button" className="scrim" aria-label="Close threads" onClick={() => setTree(false)} />
+                <aside className="flyout" aria-label="Conversation tree">
+                  <header>
+                    <div className="eyebrow">Conversation tree</div>
+                    <button type="button" className="x" aria-label="Close threads" onClick={() => setTree(false)}>
+                      ×
+                    </button>
+                  </header>
+                  <Tree p={p} parent={null} open={openThread} />
+                </aside>
               </>
             )}
-          </nav>
-          <section key={`${slug}/${view}/${id}`}>
-            <div className="breadcrumb">Field desk {p && !intake && ` / ${p.id}`}</div>
-            {!data && !error && <p>Connecting to the desk…</p>}
-            {data && intake && <Intake fixture={data.mode === "fixture"} sample={data.sample} />}{" "}
-            {data && !intake && !p && (
-              <p>
-                Looking for this project… <a href={href("", "new")}>Open project intake</a>
-              </p>
-            )}
-            {p && !intake && view === "notes" && <Notes p={p} id={id} />}{" "}
-            {p && !intake && view === "source" && <Source project={p.id} />}{" "}
-            {p &&
-              !intake &&
-              view === "thread" &&
-              (t ? <Conversation t={t} p={p} offline={Boolean(error)} /> : <p>Thread not found.</p>)}
           </section>
-        </div>
-      </main>
-    </>
+        </>
+      )}
+    </div>
   );
 }
 const root = document.getElementById("root");

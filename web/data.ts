@@ -12,6 +12,7 @@ const thread = z.object({
   busy: z.boolean(),
   waiting: z.boolean(),
   blockedBy: z.string().optional(),
+  goal: z.string().optional(),
   reports: z.array(report),
 });
 export const index = z.object({
@@ -31,12 +32,22 @@ export const messages = z.array(
   z.object({
     role: z.string(),
     text: z.string(),
+    at: z.number().optional(),
+    object: z.string().optional(),
     from: z.string().optional(),
     tool: z.string().optional(),
     step: z.string().optional(),
     failed: z.boolean().optional(),
+    report: report.optional(),
   }),
 );
+export type Message = z.infer<typeof messages>[number];
+export function spaceStatus(p: Project) {
+  if (p.threads.some((t) => t.waiting)) {
+    return "Needs input";
+  }
+  return p.threads.some((t) => t.busy) ? "Working" : "Idle";
+}
 export function href(project: string, view: string, id = "") {
   const params = new URLSearchParams({ project, view });
   if (id) {
@@ -73,9 +84,14 @@ export async function request<T>(path: string, schema: z.ZodType<T>, body?: unkn
   return schema.parse(await r.json());
 }
 export function useFeed<T>(path: string, schema: z.ZodType<T>, repeat = true) {
-  const [data, set] = useState<T>(),
+  // Keyed by path, so a new path never shows the previous path's data.
+  const [state, set] = useState<{ path: string; value: T }>(),
     [error, fail] = useState("");
   useEffect(() => {
+    // An empty path waits for one, for example until a space is selected.
+    if (!path) {
+      return;
+    }
     let open = true;
     let timer: ReturnType<typeof setTimeout>;
     async function load() {
@@ -83,7 +99,7 @@ export function useFeed<T>(path: string, schema: z.ZodType<T>, repeat = true) {
       try {
         const value = await request(path, schema);
         if (open) {
-          set(value);
+          set({ path, value });
           fail("");
         }
       } catch (error_) {
@@ -103,5 +119,5 @@ export function useFeed<T>(path: string, schema: z.ZodType<T>, repeat = true) {
       clearTimeout(timer);
     };
   }, [path, schema, repeat]);
-  return { data, error };
+  return { data: state?.path === path ? state.value : undefined, error };
 }

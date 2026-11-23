@@ -1,6 +1,6 @@
 # Pier Review
 
-Pier Review runs a single-user research desk on your machine. Create a project, give its coordinator a document and a question, and follow the researcher and Reader it delegates to. Each thread has its own transcript, status and reports. Open **Project notes** to read the evidence they saved.
+Pier Review runs a single-user research desk on your machine. Create a space, give its organizer (the coordinator agent) a document and a question, and follow the researcher and Reader it delegates to. The coordinator's conversation stays in the column beside the sidebar. The right side has tabs: **Briefing** shows the top-level goal, each sub-goal with its thread, and a running HTML account the coordinator keeps current; **Threads** opens the conversation tree, and any thread at any depth opens in its own tab where you can talk to it. When you talk to a thread directly, its report wakes its supervisor, and so on up to the coordinator; threads below are told about relevant changes as notes, without starting work. Open **Notes** to read the evidence they saved.
 
 ## Run the survey without credentials
 

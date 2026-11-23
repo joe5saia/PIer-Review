@@ -51,6 +51,16 @@ async function body<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<T> {
   }
   return schema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
 }
+const frame = `<!doctype html><meta charset="utf-8"><script>
+addEventListener("message", (e) => {
+  if (e.source !== parent || typeof e.data !== "string") return;
+  document.open();
+  document.write('<style>body{margin:8px;font:15px/1.55 Jost Variable,Futura,Avenir,sans-serif;color:#2b2622;background:#fbf6ea}</style>' + e.data +
+    '<script>addEventListener("click", (e) => { const a = e.target.closest && e.target.closest("a[href^=\\'#thread=\\']"); if (a) { e.preventDefault(); parent.postMessage({ open: a.getAttribute("href").slice(8) }, "*"); } });' +
+    'new ResizeObserver(() => parent.postMessage({ h: document.documentElement.scrollHeight }, "*")).observe(document.documentElement)<\\/script>');
+  document.close();
+}, { once: true });
+</script>`;
 let restoring = true;
 async function handle(req: IncomingMessage, res: ServerResponse) {
   try {
@@ -89,8 +99,11 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       return;
     }
     if (req.method === "POST" && path === "/api/projects") {
-      const args = await body(req, z.object({ id: name, source: note }));
-      json({ id: await desk.create(args.id, args.source) });
+      // A space can start from its name alone: fixture mode gets the offline survey, live mode a placeholder the
+      // person replaces on the Source document page.
+      const args = await body(req, z.object({ id: name, source: note.optional() }));
+      const source = args.source ?? (live ? "No source document yet. Add one on the Source document page." : sample);
+      json({ id: await desk.create(args.id, source) });
       return;
     }
     const [, api, projects, id, section, key] = path.split("/");
@@ -109,6 +122,10 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       }
       if (section === "source" && req.method === "GET") {
         json(p.source);
+        return;
+      }
+      if (section === "briefing" && req.method === "GET") {
+        json(p.briefing);
         return;
       }
       if (section === "notes" && req.method === "GET") {
@@ -131,14 +148,24 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
         }
       }
     }
-    if (req.method === "GET" && (path === "/" || /^\/assets\/[\w.-]+\.(js|css)$/.test(path))) {
+    if (req.method === "GET" && path === "/frame") {
+      // Renders agent-written HTML blocks: opaque origin, inline code only, no network or navigation.
+      res.setHeader("Content-Type", "text/html");
+      res.setHeader(
+        "Content-Security-Policy",
+        "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-ancestors 'self'",
+      );
+      res.end(frame);
+      return;
+    }
+    if (req.method === "GET" && (path === "/" || /^\/assets\/[\w.-]+\.(js|css|woff2)$/.test(path))) {
       const contents = await readFile(join(assets, path === "/" ? "index.html" : path));
-      const assetType = path.endsWith(".css") ? "text/css" : "text/javascript";
+      const assetType = { css: "text/css", woff2: "font/woff2" }[path.split(".").at(-1) ?? ""] ?? "text/javascript";
       res.setHeader("Content-Type", path === "/" ? "text/html" : assetType);
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader(
         "Content-Security-Policy",
-        "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
       );
       res.end(contents);
       return;

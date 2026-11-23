@@ -16,6 +16,8 @@ function readObservations(body: string) {
     return undefined;
   }
 }
+const briefing = (latest: string) =>
+  `<h1>Survey count</h1><p><b>Goal:</b> total the harbor visits and save the evidence.</p><h2>Latest</h2><p>${latest.replaceAll("<", "&lt;")}</p>`;
 const call = (tool: string, args: Parameters<typeof fauxToolCall>[1]) =>
   fauxAssistantMessage(fauxToolCall(tool, args), { stopReason: "toolUse" });
 export function fixtureModel(role: string, child: string | undefined, id: string) {
@@ -40,6 +42,26 @@ export function fixtureModel(role: string, child: string | undefined, id: string
         where: "Transcript",
         next: "Check the tool error",
         waitingOn: "Review the failure",
+      });
+    }
+    // An update from a thread below: refresh the briefing, then acknowledge.
+    if (question.startsWith("Report from ")) {
+      if (role !== "coordinator") {
+        return call("report", {
+          result: `Passed on: ${question.split("\n")[1]?.replace(/^Result: /, "") ?? ""}`,
+          notDone: "Nothing.",
+          where: "Thread transcript",
+          next: "Nothing.",
+        });
+      }
+      if (!last) {
+        return call("update_briefing", { html: briefing(question.split("\n")[1]?.replace(/^Result: /, "") ?? "") });
+      }
+      return call("report", {
+        result: "Noted the new result and updated the briefing.",
+        notDone: "Nothing.",
+        where: "Briefing",
+        next: "Read the briefing.",
       });
     }
     if (!last && child) {
@@ -71,6 +93,9 @@ text({rows, fetch:typeof fetch, process:typeof process, denied, where});`,
     const childReport = delegated ? z.object({ report }).parse(JSON.parse(delegated)).report : undefined;
     if (childReport?.waitingOn) {
       return call("report", { ...childReport, waitingOn: childReport.waitingOn });
+    }
+    if (role === "coordinator" && childReport && last.toolName === "spawn_subagent") {
+      return call("update_briefing", { html: briefing(childReport.result) });
     }
     if (role === "researcher" && childReport && last.toolName === "spawn_subagent") {
       return call("write_note", {
