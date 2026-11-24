@@ -1,2 +1,2 @@
 #!/usr/bin/env node
-import './src/serve.ts';
+import './apps/pier-review/src/serve.ts';

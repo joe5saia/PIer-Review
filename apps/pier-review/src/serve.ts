@@ -51,17 +51,6 @@ async function body<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<T> {
   }
   return schema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
 }
-const frame = `<!doctype html><meta charset="utf-8"><script>
-addEventListener("message", (e) => {
-  if (e.source !== parent || typeof e.data !== "string") return;
-  document.open();
-  document.write('<style>body{margin:8px;font:15px/1.55 Jost Variable,Futura,Avenir,sans-serif;color:#2b2622;background:#fbf6ea}</style>' + e.data +
-    '<script>addEventListener("click", (e) => { const a = e.target.closest && e.target.closest("a[href^=\\'#thread=\\']"); if (a) { e.preventDefault(); parent.postMessage({ open: a.getAttribute("href").slice(8) }, "*"); } });' +
-    'new ResizeObserver(() => parent.postMessage({ h: document.documentElement.scrollHeight }, "*")).observe(document.documentElement)<\\/script>');
-  document.close();
-}, { once: true });
-</script>`;
-let restoring = true;
 async function handle(req: IncomingMessage, res: ServerResponse) {
   try {
     // Local-only, including the Host check to reject DNS rebinding.
@@ -75,35 +64,18 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     }
     const url = new URL(req.url ?? "/", `http://${host}`),
       path = url.pathname;
-    if (restoring && path.startsWith("/api/")) {
-      res
-        .writeHead(503, { "Content-Type": "application/json", "Retry-After": "1" })
-        .end(JSON.stringify({ error: "Reattaching research threads…" }));
-      return;
-    }
     const json = (v: unknown) => {
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify(v));
     };
     if (req.method === "GET" && path === "/api/projects") {
-      json({
-        mode,
-        sample,
-        projects: desk.projects.map((p) => ({
-          id: p.id,
-          threads: p.threads.map((t) => ({ ...t, busy: desk.running.has(t.id) || t.status === "Working" })),
-          pages: p.pages,
-        })),
-      });
+      json({ mode, sample, projects: desk.projects.map((p) => ({ id: p.id, threads: p.threads })) });
       return;
     }
     if (req.method === "POST" && path === "/api/projects") {
-      // A space can start from its name alone: fixture mode gets the offline survey, live mode a placeholder the
-      // person replaces on the Source document page.
-      const args = await body(req, z.object({ id: name, source: note.optional() }));
-      const source = args.source ?? (live ? "No source document yet. Add one on the Source document page." : sample);
-      json({ id: await desk.create(args.id, source) });
+      const args = await body(req, z.object({ id: name, source: note }));
+      json({ id: await desk.create(args.id, args.source) });
       return;
     }
     const [, api, projects, id, section, key] = path.split("/");
@@ -111,21 +83,6 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       const p = desk.projects.find((it) => it.id === id);
       if (!p) {
         res.writeHead(404).end();
-        return;
-      }
-      if (section === "source" && req.method === "POST") {
-        const args = await body(req, z.object({ source: note }));
-        p.source = args.source;
-        desk.save();
-        json({ saved: true });
-        return;
-      }
-      if (section === "source" && req.method === "GET") {
-        json(p.source);
-        return;
-      }
-      if (section === "briefing" && req.method === "GET") {
-        json(p.briefing);
         return;
       }
       if (section === "notes" && req.method === "GET") {
@@ -148,24 +105,14 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
         }
       }
     }
-    if (req.method === "GET" && path === "/frame") {
-      // Renders agent-written HTML blocks: opaque origin, inline code only, no network or navigation.
-      res.setHeader("Content-Type", "text/html");
-      res.setHeader(
-        "Content-Security-Policy",
-        "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; frame-ancestors 'self'",
-      );
-      res.end(frame);
-      return;
-    }
-    if (req.method === "GET" && (path === "/" || /^\/assets\/[\w.-]+\.(js|css|woff2)$/.test(path))) {
+    if (req.method === "GET" && (path === "/" || /^\/assets\/[\w.-]+\.(js|css)$/.test(path))) {
       const contents = await readFile(join(assets, path === "/" ? "index.html" : path));
-      const assetType = { css: "text/css", woff2: "font/woff2" }[path.split(".").at(-1) ?? ""] ?? "text/javascript";
+      const assetType = path.endsWith(".css") ? "text/css" : "text/javascript";
       res.setHeader("Content-Type", path === "/" ? "text/html" : assetType);
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader(
         "Content-Security-Policy",
-        "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
       );
       res.end(contents);
       return;
@@ -179,19 +126,17 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 const server = createServer((req, res) => {
   void handle(req, res);
 });
-await new Promise<void>((ready) => {
-  server.listen(port, "127.0.0.1", ready);
-});
 for (const p of desk.projects) {
   for (const t of p.threads) {
     await desk.open(p, t);
   }
 }
-restoring = false;
-const a = server.address();
-if (a && typeof a !== "string") {
-  process.stdout.write(`Pier Review (${mode}): http://127.0.0.1:${a.port}\n`);
-}
+server.listen(port, "127.0.0.1", () => {
+  const a = server.address();
+  if (a && typeof a !== "string") {
+    process.stdout.write(`Pier Review (${mode}): http://127.0.0.1:${a.port}\n`);
+  }
+});
 async function stop() {
   server.close();
   await desk.close();

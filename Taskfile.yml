@@ -2,75 +2,62 @@ version: "3"
 
 set: [errexit, pipefail]
 
-vars:
-  LINT_SOURCES: &lint-sources
-    - "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
-    - oxlint.config.ts
-    - package.json
-    - pnpm-lock.yaml
-    - exclude: node_modules/**
-
 tasks:
   default:
-    desc: List the tasks
+    desc: List the workspace tasks
     cmd: task --list
     silent: true
 
   install:
-    desc: Install the locked dependencies
+    desc: Install locked dependencies for all workspace projects
     cmd: pnpm install --frozen-lockfile
 
-  lint:
-    desc: Lint with @cloudflare/oxlint-config and type information, warnings as errors
-    sources: *lint-sources
-    cmd: pnpm exec oxlint --type-aware --deny-warnings src web projects e2e *.ts
-
-  lint:fix:
-    desc: Apply the automatic lint corrections
-    cmd: pnpm exec oxlint --type-aware --fix src web projects e2e *.ts
-
   fmt:
-    desc: Format source and configuration
+    desc: Format the entire workspace
     cmd: pnpm exec oxfmt
 
   fmt:check:
-    desc: Check source and configuration formatting
+    desc: Check formatting across the workspace
     cmd: pnpm exec oxfmt --check
 
-  typecheck:
-    desc: Check both Node and browser projects
+  lint:
+    desc: Lint shared configuration and every project
     cmds:
-      - for: ["tsconfig.json", "web/tsconfig.json"]
-        cmd: pnpm exec tsrs --noEmit -p {{.ITEM}} && pnpm exec tsc --noEmit -p {{.ITEM}}
+      - pnpm exec oxlint --type-aware --deny-warnings oxlint.config.ts
+      - pnpm -r --if-present run lint
+
+  lint:fix:
+    desc: Apply automatic lint corrections across the workspace
+    cmds:
+      - pnpm exec oxlint --type-aware --fix oxlint.config.ts
+      - pnpm -r --if-present run lint:fix
+
+  typecheck:
+    desc: Typecheck every project
+    cmd: pnpm -r --if-present run typecheck
 
   build:
-    desc: Build the browser desk for pier serve
-    cmd: pnpm exec vite build web --outDir ../dist --emptyOutDir
+    desc: Build every project
+    cmd: pnpm -r --if-present run build
 
   image:
-    desc: Cache the pinned agent image before offline development
-    vars:
-      IMAGE:
-        sh: node --input-type=module -e 'import {image} from "./src/docker.ts"; process.stdout.write(image)'
-    cmd: docker image inspect {{.IMAGE}} >/dev/null 2>&1 || docker pull {{.IMAGE}}
+    desc: Cache container images required by workspace projects
+    cmd: pnpm -r --if-present run image
 
   dev:
-    desc: Build the desk and launch the local server
-    deps: [build]
-    cmd: ./pier serve
+    desc: Build and launch the Pier Review desk
+    cmd: pnpm --filter pier-review run dev
 
   test:
-    desc: Exercise the CLI on loopback with real Docker and no credentials
-    deps: [build]
-    cmd: pnpm exec vitest run
+    desc: Run every project's tests (including its build prerequisites)
+    cmd: pnpm -r --if-present run test
 
   test:watch:
-    desc: Rerun research scenarios on changes
-    deps: [build]
-    cmd: pnpm exec vitest
+    desc: Watch the Pier Review research scenarios
+    cmd: pnpm --filter pier-review run test:watch
 
   check:
-    desc: Run all checks, the same as CI
+    desc: Run all workspace checks, the same as CI
     cmds:
       - task: fmt:check
       - task: lint

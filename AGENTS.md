@@ -1,6 +1,8 @@
 # Pier Review
 
-Single-user, local research app. The slice boundary is the Build order in `pier-review/initial-design/design-vision-v1.md` (Pecia): finish desktop acceptance before experiment execution.
+pnpm monorepo: applications live in `apps/*`, shared libraries in `packages/*` (when needed). Keep one root lockfile and shared toolchain; declare app dependencies in its own package. Root Task commands aggregate package scripts. The current app is `apps/pier-review/`; app-relative paths below refer to that directory.
+
+Pier Review is a single-user, local research app. The slice boundary is the Build order in `pier-review/initial-design/design-vision-v1.md` (Pecia): finish desktop acceptance before experiment execution.
 
 - `projects/` holds trusted TypeScript definitions. `src/spec.ts` validates their data; importing a module executes code before that validation.
 - `src/research.ts` owns durable conversations and tool permissions. Apply restrictions to nested code-mode calls as well as top-level tools. Preserve passive child reports across resume; do not enqueue a new model turn merely to display one.
@@ -9,7 +11,7 @@ Single-user, local research app. The slice boundary is the Build order in `pier-
 
 ## Commands and environment
 
-Use the repository pins and `.agents/setup` from its root. Run `pnpm exec task check` before handing off a change; Docker is required and no test needs credentials. Use `pnpm exec task fmt` for formatting. See [README](README.md) for live environment variables and how to distinguish a failed provider call from a failed Pecia call. There is no deployed Pier service.
+Use the repository pins and `.agents/setup` from its root. Run `pnpm exec task check` before handing off a change; Docker is required and no test needs credentials. Use `pnpm exec task fmt` for formatting. See [the app README](apps/pier-review/README.md) for live environment variables and how to distinguish a failed provider call from a failed Pecia call. There is no deployed Pier service.
 
 ## Style, errors and tests
 

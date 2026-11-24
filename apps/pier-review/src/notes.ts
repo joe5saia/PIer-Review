@@ -113,12 +113,6 @@ export function workspace(dir: string, workspaceName: string, live: boolean) {
         });
         z.object({ status: z.enum(["published", "unchanged"]) }).parse(await r.json());
       } else {
-        // Repeated fixture runs can cite identical evidence from another thread.
-        for (const existing of await this.list()) {
-          if ((await this.read(existing)) === content) {
-            return existing;
-          }
-        }
         await mkdir(dirname(join(local, path)), { recursive: true });
         await writeFile(join(local, path), content, { flag: "wx" });
       }

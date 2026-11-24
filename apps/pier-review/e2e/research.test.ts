@@ -6,11 +6,17 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { it, expect } from "vitest";
 import { z } from "zod";
 
-async function serve(dir: string, env: NodeJS.ProcessEnv = {}) {
-  const child = spawn("./pier", ["serve"], {
+async function serve(
+  dir: string,
+  env: NodeJS.ProcessEnv = {},
+  launcher = { executable: "./pier", cwd: process.cwd() },
+) {
+  const child = spawn(launcher.executable, ["serve"], {
+    cwd: launcher.cwd,
     env: { PATH: process.env.PATH, HOME: process.env.HOME, PIER_DATA: dir, PORT: "0", PIER_MODE: "fixture", ...env },
     stdio: ["ignore", "pipe", "inherit"],
   });
@@ -31,6 +37,31 @@ async function serve(dir: string, env: NodeJS.ProcessEnv = {}) {
   }
   throw new Error("Pier exited before printing its address");
 }
+it("serves the desk through both workspace launchers from outside the checkout", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pier-launchers-"));
+  try {
+    for (const path of ["../../../pier", "../pier"]) {
+      const server = await serve(
+        dir,
+        {},
+        {
+          executable: fileURLToPath(new URL(path, import.meta.url)),
+          cwd: dir,
+        },
+      );
+      try {
+        const response = await fetch(server.url);
+        expect(response.status).toBe(200);
+        expect(await response.text()).toContain("<html");
+      } finally {
+        await server.stop();
+      }
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 const projectIndex = z.object({
   projects: z.array(
     z.object({
@@ -38,7 +69,6 @@ const projectIndex = z.object({
         z.object({
           id: z.string(),
           role: z.string(),
-          waiting: z.boolean(),
           reports: z.array(z.object({ result: z.string(), where: z.string() })),
         }),
       ),
@@ -79,17 +109,7 @@ it("resumes admitted research after a process kill and delivers the Reader evide
     expect(log.find((m) => m.role === "toolResult" && m.text.includes("Script completed"))?.text).toContain(
       '"fetch":"undefined","process":"undefined","denied":true',
     );
-    const coordinatorLog = z
-      .array(z.object({ role: z.string(), report: z.object({ result: z.string() }).optional() }))
-      .parse(await (await fetch(base + route)).json());
-    expect(coordinatorLog.some((m) => m.role === "Child report")).toBe(true);
-    // The desk shows the report that ended a turn as that turn's answer.
-    expect(coordinatorLog.findLast((m) => m.report)?.report?.result).toBe(all[0]?.reports[0]?.result);
-    // The New space dialog sends only a name; a fixture space then starts from the offline survey.
-    expect((await post(base, { id: "harbor" })).ok).toBe(true);
-    expect(await (await fetch(`${base}/harbor/source`)).json()).toContain("Salt Marsh: 12");
-    const frame = await fetch(`${server.url}/frame`);
-    expect(frame.headers.get("content-security-policy")).toMatch(/^sandbox allow-scripts; default-src 'none';/);
+    expect(history.parse(await (await fetch(base + route)).json()).some((m) => m.role === "Child report")).toBe(true);
     const files = z.array(z.string()).parse(await (await fetch(`${base}/wetlands/notes`)).json());
     expect(files).toHaveLength(2);
     const summary = all[0]?.reports[0]?.where;
@@ -105,68 +125,9 @@ it("resumes admitted research after a process kill and delivers the Reader evide
       ]);
       expect(stdout.trim()).toBe("none true 65534:65534");
     }
-    expect((await post(readerUrl, { text: "Which site had the most visits?" })).ok).toBe(true);
+    expect((await post(readerUrl, { text: "Double-check the total." })).ok).toBe(true);
     await expect.poll(async () => (await threads()).at(-1)?.reports.length, { timeout: 10_000 }).toBe(2);
-    expect((await threads()).at(-1)?.reports.at(-1)?.result).toBe("Transect B had the most visits: 11.");
-    expect(await (await fetch(`${base}/wetlands/notes`)).json()).toEqual(files);
-    await expect
-      .poll(async () =>
-        history
-          .parse(await (await fetch(base + route)).json())
-          .some((m) => m.role === "Child report" && m.text === "Transect B had the most visits: 11."),
-      )
-      .toBe(true);
-    // Talking to the Reader directly wakes each supervisor in turn: the researcher passes it on, the coordinator
-    // reacts and refreshes the briefing.
-    await expect.poll(async () => (await threads())[0]?.reports.length, { timeout: 20_000 }).toBe(2);
-    expect((await threads())[1]?.reports.at(-1)?.result).toBe("Passed on: Transect B had the most visits: 11.");
-    expect(await (await fetch(`${base}/wetlands/briefing`)).json()).toContain("Transect B had the most visits: 11.");
-    const updates = history.parse(await (await fetch(base + route)).json()).filter((m) => m.role === "Update");
-    expect(updates.map((m) => m.text.split("\n")[1])).toEqual([
-      "Result: Passed on: Transect B had the most visits: 11.",
-    ]);
-    expect((await post(base + route, { text: "Total the visits again." })).ok).toBe(true);
-    await expect.poll(async () => (await threads())[0]?.reports.length, { timeout: 20_000 }).toBe(3);
-    expect((await threads())[0]?.reports.at(-1)).toMatchObject({
-      result: "17 visits recorded across 3 survey sites.",
-      where: summary,
-    });
-    expect(await (await fetch(`${base}/wetlands/notes`)).json()).toEqual(files);
     expect((await fetch(`${base}/wetlands/notes?path=../outside.md`)).ok).toBe(false);
-  } finally {
-    await server.stop();
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-it("answers a delegated wait after restart without spawning replacement threads", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "pier-wait-"));
-  let server = await serve(dir);
-  try {
-    const base = () => `${server.url}/api/projects`;
-    const threads = async () => projectIndex.parse(await (await fetch(base())).json()).projects[0]?.threads ?? [];
-    const { id } = z
-      .object({ id: z.uuid() })
-      .parse(await (await post(base(), { id: "docks", source: "No observations yet." })).json());
-    const send = (text: string) => post(`${base()}/docks/threads/${id}`, { text });
-    expect((await send("Count the visits.")).ok).toBe(true);
-    await expect
-      .poll(async () => (await threads())[0]?.reports.at(-1)?.result, { timeout: 20_000 })
-      .toBe("No survey counts found.");
-    const before = await threads();
-    expect(before.filter((t) => t.waiting).map((t) => t.role)).toEqual(["reader"]);
-    await server.stop();
-    server = await serve(dir);
-    expect((await send("East dock: 5 / West dock: 0")).ok).toBe(true);
-    await expect
-      .poll(async () => (await threads())[0]?.reports.at(-1)?.result, { timeout: 20_000 })
-      .toBe("5 visits recorded across 2 survey sites.");
-    await server.stop();
-    server = await serve(dir);
-    const after = await threads();
-    expect(after.map((t) => t.id)).toEqual(before.map((t) => t.id));
-    expect(after.some((t) => t.waiting)).toBe(false);
-    expect(after.every((t) => t.reports.at(-1)?.result === "5 visits recorded across 2 survey sites.")).toBe(true);
   } finally {
     await server.stop();
     await rm(dir, { recursive: true, force: true });

@@ -1,5 +1,6 @@
 packages:
-  - .
+  - apps/*
+  - packages/*
 
 # Dependencies whose install scripts may run (pnpm blocks all others).
 allowBuilds:

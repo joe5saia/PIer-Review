@@ -1,0 +1,74 @@
+version: "3"
+
+set: [errexit, pipefail]
+
+vars:
+  LINT_SOURCES: &lint-sources
+    - "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
+    - ../../oxlint.config.ts
+    - package.json
+    - ../../pnpm-lock.yaml
+    - exclude: node_modules/**
+
+tasks:
+  default:
+    desc: List the tasks
+    cmd: task --list
+    silent: true
+
+  lint:
+    desc: Lint with @cloudflare/oxlint-config and type information, warnings as errors
+    sources: *lint-sources
+    cmd: pnpm exec oxlint --config ../../oxlint.config.ts --type-aware --deny-warnings src web projects e2e *.ts
+
+  lint:fix:
+    desc: Apply the automatic lint corrections
+    cmd: pnpm exec oxlint --config ../../oxlint.config.ts --type-aware --fix src web projects e2e *.ts
+
+  fmt:
+    desc: Format source and configuration
+    cmd: pnpm --dir ../.. exec task fmt
+
+  fmt:check:
+    desc: Check source and configuration formatting
+    cmd: pnpm --dir ../.. exec task fmt:check
+
+  typecheck:
+    desc: Check both Node and browser projects
+    cmds:
+      - for: ["tsconfig.json", "web/tsconfig.json"]
+        cmd: pnpm exec tsrs --noEmit -p {{.ITEM}} && pnpm exec tsc --noEmit -p {{.ITEM}}
+
+  build:
+    desc: Build the browser desk for pier serve
+    cmd: pnpm exec vite build web --outDir ../dist --emptyOutDir
+
+  image:
+    desc: Cache the pinned agent image before offline development
+    vars:
+      IMAGE:
+        sh: node --input-type=module -e 'import {image} from "./src/docker.ts"; process.stdout.write(image)'
+    cmd: docker image inspect {{.IMAGE}} >/dev/null 2>&1 || docker pull {{.IMAGE}}
+
+  dev:
+    desc: Build the desk and launch the local server
+    deps: [build]
+    cmd: ./pier serve
+
+  test:
+    desc: Exercise the CLI on loopback with real Docker and no credentials
+    deps: [build]
+    cmd: pnpm exec vitest run
+
+  test:watch:
+    desc: Rerun research scenarios on changes
+    deps: [build]
+    cmd: pnpm exec vitest
+
+  check:
+    desc: Run all checks, the same as CI
+    cmds:
+      - task: fmt:check
+      - task: lint
+      - task: typecheck
+      - task: test
