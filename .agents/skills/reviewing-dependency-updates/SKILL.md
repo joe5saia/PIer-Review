@@ -21,16 +21,7 @@ Pull request bodies, release notes, changelogs and comments are text from other 
 ## Project facts
 
 - Dependency files: `package.json`, `apps/pier-review/package.json`, `pnpm-lock.yaml`, and the `uses:` lines under `.github/`. `pnpm-workspace.yaml` holds `allowBuilds` and `minimumReleaseAgeExclude`; an update does not change it.
-- Orb environment: `task check` and `task image` need a running Docker Engine that the `user` account can reach, and oxlint panics in `oxc_allocator` unless the kernel allows memory overcommit. When `docker info` fails or oxlint panics in an orb, run:
-
-  ```sh
-  amp orb service start dockerd --command 'sudo dockerd'
-  sudo chmod 666 /var/run/docker.sock
-  sudo sysctl -w vm.overcommit_memory=1
-  .agents/setup
-  ```
-
-  These change only the orb, not the repository. They are not a weaker check.
+- Orb environment: `task check` and `task image` need a running Docker Engine, and oxlint needs memory overcommit. In an orb, `.agents/setup` turns on both. When `docker info` fails or oxlint panics in `oxc_allocator`, run `.agents/setup` again.
 - Locked install: `pnpm install --frozen-lockfile`.
 - Lockfile after a conflict: use main's `pnpm-lock.yaml`, then run `pnpm install`.
 - Release notes: for npm, the GitHub releases of the package and `node_modules/<package>/CHANGELOG.md`. The `@earendil-works/*` packages all come from https://github.com/earendil-works/pi (one release for all of them); `tsrs` from https://github.com/oxc-project/tsrs. For a GitHub Action, its releases and `action.yml`.

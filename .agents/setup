@@ -2,6 +2,17 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 node -e 'if (Number(process.versions.node.split(".")[0]) !== 26) throw Error("Use Node 26")'
+if [[ -n ${AMP_ORB-} ]]; then
+  # Amp orbs: oxlint's allocator reserves more address space than heuristic overcommit allows,
+  # and Docker is installed but disabled, with its socket in a group this user's processes lack.
+  sudo sysctl -q -w vm.overcommit_memory=1
+  if ! docker info >/dev/null 2>&1; then
+    sudo mkdir -p /etc/systemd/system/docker.socket.d
+    printf '[Socket]\nSocketGroup=%s\n' "$(id -gn)" | sudo tee /etc/systemd/system/docker.socket.d/orb-user.conf >/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now docker.socket docker.service
+  fi
+fi
 docker info --format 'Docker {{.ServerVersion}}'
 pnpm install --frozen-lockfile --prefer-offline
 pnpm exec task image
