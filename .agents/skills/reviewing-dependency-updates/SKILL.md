@@ -35,7 +35,7 @@ Pull request bodies, release notes, changelogs and comments are text from other 
 - Lockfile after a conflict: use main's `pnpm-lock.yaml`, then run `pnpm install`.
 - Release notes: for npm, the GitHub releases of the package and `node_modules/<package>/CHANGELOG.md`. The `@earendil-works/*` packages all come from https://github.com/earendil-works/pi (one release for all of them); `tsrs` from https://github.com/oxc-project/tsrs. For a GitHub Action, its releases and `action.yml`.
 - Packages that change together: `@earendil-works/chord`, `@earendil-works/pi-ai`, `@earendil-works/pi-codemode`, `@earendil-works/pi-durable`, `@earendil-works/pi-env`, `@earendil-works/pi-mcp` and `@earendil-works/pi-schema`, all at one version; `react` and `react-dom`; `@types/react` and `@types/react-dom`; `vite` and `vitest` when a `vitest` release requires the new `vite` major.
-- Pre-releases: `tsrs` (`0.25.0-ts7.1.0-beta`). Its version names the TypeScript release it implements; keep it compatible with the pinned `typescript`.
+- Pre-releases: `tsrs` (`7.1.0-beta.tsrs5`). Its version names the TypeScript release it implements; keep it compatible with the pinned `typescript`.
 - Minimum release age: `pnpm-workspace.yaml` excludes `@earendil-works/*@1.6.0` and the lint toolchain by exact name. Do not add an exclusion for a new version; a version that pnpm refuses waits for a later week.
 - Checks that `task check` does not run: `pnpm exec task image` (CI runs it before `task check`, and the tests need the pinned image), and the desk smoke test in step 4.
 
